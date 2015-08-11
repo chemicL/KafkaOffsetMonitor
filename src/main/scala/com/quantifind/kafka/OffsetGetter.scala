@@ -102,7 +102,7 @@ class OffsetGetter(zkClient: ZkClient, brokerStorage: Boolean) extends Logging {
   }
 
   private def fetchOffsetZk(consumer: SimpleConsumer, group: String, topic: String, pid: Int): OffsetWithStat = {
-    val (offset, stat: Stat) = ZkUtils.readData(zkClient, s"${ZkUtils.ConsumersPath}/$group/offsets/$topic/$pid.")
+    val (offset, stat: Stat) = ZkUtils.readData(zkClient, s"${ZkUtils.ConsumersPath}/$group/offsets/$topic/$pid")
     OffsetWithStat(offset.toLong,
       Some(Time.fromMilliseconds(stat.getCtime)),
       Some(Time.fromMilliseconds(stat.getMtime))
