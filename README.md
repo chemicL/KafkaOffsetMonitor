@@ -40,6 +40,7 @@ java -cp KafkaOffsetMonitor-assembly-0.2.1.jar \
      --port 8080 \
      --refresh 10.seconds \
      --retain 2.days
+     --brokerStorage true
 ```
 
 The arguments are:
@@ -50,6 +51,7 @@ The arguments are:
 - **retain** how long should points be kept in the DB
 - **dbName** where to store the history (default 'offsetapp')
 - **pluginsArgs** additional arguments used by extensions (see below)
+- **brokerStorage** whether to use the broker storage for offsets (since Kafka 0.8.2)
 
 Writing and using plugins
 ============================
@@ -79,6 +81,7 @@ java -cp KafkaOffsetMonitor-assembly-0.3.0.jar:kafka-offset-monitor-another-db-r
      --port 8080 \
      --refresh 10.seconds \
      --retain 2.days
+     --brokerStorage true
      --pluginsArgs anotherDbHost=host1,anotherDbPort=555
 ```
 
