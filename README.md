@@ -38,20 +38,20 @@ java -cp KafkaOffsetMonitor-assembly-0.2.1.jar \
      com.quantifind.kafka.offsetapp.OffsetGetterWeb \
      --zk zk-server1,zk-server2 \
      --port 8080 \
+     --brokerStorage true \
      --refresh 10.seconds \
      --retain 2.days
-     --brokerStorage true
 ```
 
 The arguments are:
 
 - **zk** the ZooKeeper hosts
 - **port** on what port will the app be available
+- **brokerStorage** whether to use the broker storage for offsets (since Kafka 0.8.2)
 - **refresh** how often should the app refresh and store a point in the DB
 - **retain** how long should points be kept in the DB
 - **dbName** where to store the history (default 'offsetapp')
 - **pluginsArgs** additional arguments used by extensions (see below)
-- **brokerStorage** whether to use the broker storage for offsets (since Kafka 0.8.2)
 
 Writing and using plugins
 ============================
@@ -79,9 +79,9 @@ java -cp KafkaOffsetMonitor-assembly-0.3.0.jar:kafka-offset-monitor-another-db-r
      com.quantifind.kafka.offsetapp.OffsetGetterWeb \
      --zk zk-server1,zk-server2 \
      --port 8080 \
+     --brokerStorage true \
      --refresh 10.seconds \
-     --retain 2.days
-     --brokerStorage true
+     --retain 2.days \
      --pluginsArgs anotherDbHost=host1,anotherDbPort=555
 ```
 
