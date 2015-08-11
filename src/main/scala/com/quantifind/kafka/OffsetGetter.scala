@@ -1,16 +1,17 @@
 package com.quantifind.kafka
 
-import scala.collection._
-
 import com.quantifind.kafka.OffsetGetter.{BrokerInfo, KafkaInfo, OffsetInfo}
-import kafka.api.{OffsetRequest, PartitionOffsetRequestInfo}
+import com.twitter.util.Time
+import kafka.api.{PartitionOffsetRequestInfo, OffsetRequest, OffsetFetchResponse, OffsetFetchRequest}
 import kafka.common.{BrokerNotAvailableException, TopicAndPartition}
 import kafka.consumer.SimpleConsumer
+import kafka.network.BlockingChannel
 import kafka.utils.{Json, Logging, ZkUtils}
 import org.I0Itec.zkclient.ZkClient
 import org.I0Itec.zkclient.exception.ZkNoNodeException
-import com.twitter.util.Time
 import org.apache.zookeeper.data.Stat
+
+import scala.collection._
 import scala.util.control.NonFatal
 
 /**
@@ -29,7 +30,9 @@ case class TopicAndConsumersDetailsWrapper(consumers: TopicAndConsumersDetails)
 
 case class ConsumerDetail(name: String)
 
-class OffsetGetter(zkClient: ZkClient) extends Logging {
+case class OffsetWithStat(offset: Long, creation: Option[Time], modified: Option[Time])
+
+class OffsetGetter(zkClient: ZkClient, brokerStorage: Boolean) extends Logging {
 
   private val consumerMap: mutable.Map[Int, Option[SimpleConsumer]] = mutable.Map()
 
@@ -58,7 +61,6 @@ class OffsetGetter(zkClient: ZkClient) extends Logging {
 
   private def processPartition(group: String, topic: String, pid: Int): Option[OffsetInfo] = {
     try {
-      val (offset, stat: Stat) = ZkUtils.readData(zkClient, s"${ZkUtils.ConsumersPath}/$group/offsets/$topic/$pid")
       val (owner, _) = ZkUtils.readDataMaybeNull(zkClient, s"${ZkUtils.ConsumersPath}/$group/owners/$topic/$pid")
 
       ZkUtils.getLeaderForPartition(zkClient, topic, pid) match {
@@ -66,19 +68,21 @@ class OffsetGetter(zkClient: ZkClient) extends Logging {
           val consumerOpt = consumerMap.getOrElseUpdate(bid, getConsumer(bid))
           consumerOpt map {
             consumer =>
-              val topicAndPartition = TopicAndPartition(topic, pid)
-              val request =
-                OffsetRequest(immutable.Map(topicAndPartition -> PartitionOffsetRequestInfo(OffsetRequest.LatestTime, 1)))
-              val logSize = consumer.getOffsetsBefore(request).partitionErrorAndOffsets(topicAndPartition).offsets.head
-
-              OffsetInfo(group = group,
+              val logSize = fetchLogSize(consumer, TopicAndPartition(topic, pid))
+              val offsetAndStat = if (brokerStorage)
+                fetchOffsetKafka(consumer, group, topic, pid)
+              else
+                fetchOffsetZk(consumer, group, topic, pid)
+              OffsetInfo(
+                group = group,
                 topic = topic,
                 partition = pid,
-                offset = offset.toLong,
+                offset = offsetAndStat.offset,
                 logSize = logSize,
                 owner = owner,
-                creation = Time.fromMilliseconds(stat.getCtime),
-                modified = Time.fromMilliseconds(stat.getMtime))
+                creation = offsetAndStat.creation,
+                modified = offsetAndStat.modified
+              )
           }
         case None =>
           error("No broker for partition %s - %s".format(topic, pid))
@@ -86,9 +90,36 @@ class OffsetGetter(zkClient: ZkClient) extends Logging {
       }
     } catch {
       case NonFatal(t) =>
-        error(s"Could not parse partition info. group: [$group] topic: [$topic]", t)
+        error(s"Could not fetch partition info. group: [$group] topic: [$topic]", t)
         None
     }
+  }
+
+  private def fetchLogSize(consumer: SimpleConsumer, topicAndPartition: TopicAndPartition): Long = {
+    val offsetRequest = OffsetRequest(
+      immutable.Map(topicAndPartition -> PartitionOffsetRequestInfo(OffsetRequest.LatestTime, 1)))
+    consumer.getOffsetsBefore(offsetRequest).partitionErrorAndOffsets(topicAndPartition).offsets.head
+  }
+
+  private def fetchOffsetZk(consumer: SimpleConsumer, group: String, topic: String, pid: Int): OffsetWithStat = {
+    val (offset, stat: Stat) = ZkUtils.readData(zkClient, s"${ZkUtils.ConsumersPath}/$group/offsets/$topic/$pid.")
+    OffsetWithStat(offset.toLong,
+      Some(Time.fromMilliseconds(stat.getCtime)),
+      Some(Time.fromMilliseconds(stat.getMtime))
+    )
+  }
+
+  private def fetchOffsetKafka(consumer: SimpleConsumer, group: String, topic: String, pid: Int): OffsetWithStat = {
+    val topicAndPartition = TopicAndPartition(topic, pid)
+    val offsetFetchRequest = OffsetFetchRequest(group, Seq(topicAndPartition), 1.toShort, 0)
+    val channel = new BlockingChannel(consumer.host, consumer.port,
+      BlockingChannel.UseDefaultBufferSize, BlockingChannel.UseDefaultBufferSize, 5000)
+    channel.connect()
+    channel.send(offsetFetchRequest)
+    val offsetFetchResponse = OffsetFetchResponse.readFrom(channel.receive().buffer)
+    val offset = offsetFetchResponse.requestInfo(topicAndPartition).offset
+
+    OffsetWithStat(offset, None, None)
   }
 
   private def processTopic(group: String, topic: String): Seq[OffsetInfo] = {
@@ -119,7 +150,7 @@ class OffsetGetter(zkClient: ZkClient) extends Logging {
 
   def getTopicList(group: String): List[String] = {
     try {
-      ZkUtils.getChildren(zkClient, s"${ZkUtils.ConsumersPath}/$group/offsets").toList
+      ZkUtils.getChildren(zkClient, s"${ZkUtils.ConsumersPath}/$group/owners").toList
     } catch {
       case _: ZkNoNodeException => List()
     }
@@ -202,7 +233,6 @@ class OffsetGetter(zkClient: ZkClient) extends Logging {
     }
   }
 
-
   /**
    * Returns a map of active topics -> list of consumers from zookeeper, ones that have IDS attached to them
    */
@@ -211,7 +241,7 @@ class OffsetGetter(zkClient: ZkClient) extends Logging {
       ZkUtils.getChildren(zkClient, ZkUtils.ConsumersPath).flatMap {
         group =>
           try {
-            ZkUtils.getConsumersPerTopic(zkClient, group).keySet.map {
+            ZkUtils.getConsumersPerTopic(zkClient, group, false).keySet.map {
               key =>
                 key -> group
             }
@@ -262,7 +292,7 @@ class OffsetGetter(zkClient: ZkClient) extends Logging {
 
   def getClusterViz: Node = {
     val clusterNodes = ZkUtils.getAllBrokersInCluster(zkClient).map((broker) => {
-      Node(broker.getConnectionString(), Seq())
+      Node(broker.connectionString, Seq())
     })
     Node("KafkaCluster", clusterNodes)
   }
@@ -275,7 +305,6 @@ class OffsetGetter(zkClient: ZkClient) extends Logging {
       }
     }
   }
-
 }
 
 object OffsetGetter {
@@ -290,8 +319,8 @@ object OffsetGetter {
                         offset: Long,
                         logSize: Long,
                         owner: Option[String],
-                        creation: Time,
-                        modified: Time) {
+                        creation: Option[Time],
+                        modified: Option[Time]) {
     val lag = logSize - offset
   }
 

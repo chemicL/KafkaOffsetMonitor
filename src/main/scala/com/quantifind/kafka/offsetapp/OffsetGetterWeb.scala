@@ -57,6 +57,7 @@ object OffsetGetterWeb extends UnfilteredWebApp[OWArgs] with Logging {
 
   var zkClient: ZkClient = null
   var reporters: mutable.Set[OffsetInfoReporter] = null
+  var brokerStorage = false
 
   def retryTask[T](fn: => T) {
     try {
@@ -89,7 +90,7 @@ object OffsetGetterWeb extends UnfilteredWebApp[OWArgs] with Logging {
   def withOG[T](args: OWArgs)(f: OffsetGetter => T): T = {
     var og: OffsetGetter = null
     try {
-      og = new OffsetGetter(zkClient)
+      og = new OffsetGetter(zkClient, brokerStorage)
       f(og)
     } finally {
       if (og != null) og.close()
@@ -148,6 +149,8 @@ object OffsetGetterWeb extends UnfilteredWebApp[OWArgs] with Logging {
     zkClient = new ZkClient(args.zk,  args.zkSessionTimeout.toMillis.toInt,
                                       args.zkConnectionTimeout.toMillis.toInt,
                                       ZKStringSerializer)
+
+    brokerStorage = args.brokerStorage
 
     reporters = createOffsetInfoReporters(args)
 

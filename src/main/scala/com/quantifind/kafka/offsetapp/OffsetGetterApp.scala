@@ -28,6 +28,8 @@ class OffsetGetterArgs extends FieldArgs {
   @Required
   var zk: String = _
 
+  var brokerStorage = false
+
   var zkSessionTimeout: Duration = 30 seconds
   var zkConnectionTimeout: Duration = 30 seconds
 
@@ -48,7 +50,7 @@ object OffsetGetterApp extends ArgMain[OffsetGetterArgsWGT] {
         args.zkSessionTimeout.toMillis.toInt,
         args.zkConnectionTimeout.toMillis.toInt,
         ZKStringSerializer)
-      og = new OffsetGetter(zkClient)
+      og = new OffsetGetter(zkClient, args.brokerStorage)
       val i = og.getInfo(args.group, args.topics)
 
       if (i.offsets.nonEmpty) {

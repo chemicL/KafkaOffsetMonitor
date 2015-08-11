@@ -40,8 +40,8 @@
       <td>{{p.logSize}}</td>
       <td>{{p.logSize - p.offset}}</td>
       <td>{{p.owner}}</td>
-      <td><moment timestamp="{{p.creation}}"></moment></td>
-      <td><moment timestamp="{{p.modified}}"></moment></td>
+      <td><moment ng-show="p.creation" timestamp="{{p.creation}}"></moment></td>
+      <td><moment ng-show="p.modified" timestamp="{{p.modified}}"></moment></td>
     </tr>
   </tbody>
 </table>

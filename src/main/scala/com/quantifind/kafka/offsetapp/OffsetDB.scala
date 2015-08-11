@@ -35,8 +35,8 @@ class OffsetDB(dbfile: String) {
     val logSize = column[Long]("log_size")
     val owner = column[Option[String]]("owner")
     val timestamp = column[Long]("timestamp")
-    val creation = column[Time]("creation")
-    val modified = column[Time]("modified")
+    val creation = column[Option[Time]]("creation", O.Nullable)
+    val modified = column[Option[Time]]("modified", O.Nullable)
 
 
     def * = (id.?, group, topic, partition, offset, logSize, owner, timestamp, creation, modified).shaped <>(DbOffsetInfo.parse, DbOffsetInfo.unparse)
@@ -105,23 +105,26 @@ object OffsetDB {
   case class DbOffsetInfo(id: Option[Int] = None, timestamp: Long, offset: OffsetInfo)
 
   object DbOffsetInfo {
-    def parse(in: (Option[Int], String, String, Int, Long, Long, Option[String], Long, Time, Time)): DbOffsetInfo = {
+    def parse(in: (Option[Int], String, String, Int, Long, Long, Option[String], Long,
+        Option[Time], Option[Time])): DbOffsetInfo = {
       val (id, group, topic, partition, offset, logSize, owner, timestamp, creation, modified) = in
       DbOffsetInfo(id, timestamp, OffsetInfo(group, topic, partition, offset, logSize, owner, creation, modified))
     }
 
-    def unparse(in: DbOffsetInfo): Option[(Option[Int], String, String, Int, Long, Long, Option[String], Long, Time, Time)] = Some(
-      in.id,
-      in.offset.group,
-      in.offset.topic,
-      in.offset.partition,
-      in.offset.offset,
-      in.offset.logSize,
-      in.offset.owner,
-      in.timestamp,
-      in.offset.creation,
-      in.offset.modified
-    )
+    def unparse(in: DbOffsetInfo): Option[(Option[Int], String, String, Int, Long, Long,
+        Option[String], Long, Option[Time], Option[Time])] =
+      Some(
+        in.id,
+        in.offset.group,
+        in.offset.topic,
+        in.offset.partition,
+        in.offset.offset,
+        in.offset.logSize,
+        in.offset.owner,
+        in.timestamp,
+        in.offset.creation,
+        in.offset.modified
+      )
   }
 
 }
