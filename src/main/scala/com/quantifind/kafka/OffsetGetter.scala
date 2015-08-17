@@ -2,8 +2,10 @@ package com.quantifind.kafka
 
 import com.quantifind.kafka.OffsetGetter.{BrokerInfo, KafkaInfo, OffsetInfo}
 import com.twitter.util.Time
-import kafka.api.{PartitionOffsetRequestInfo, OffsetRequest, OffsetFetchResponse, OffsetFetchRequest}
-import kafka.common.{BrokerNotAvailableException, TopicAndPartition}
+import kafka.api.{ConsumerMetadataRequest, ConsumerMetadataResponse, OffsetFetchRequest,
+  OffsetFetchResponse, OffsetRequest, PartitionOffsetRequestInfo}
+import kafka.cluster.Broker
+import kafka.common.{BrokerNotAvailableException, ErrorMapping, TopicAndPartition}
 import kafka.consumer.SimpleConsumer
 import kafka.network.BlockingChannel
 import kafka.utils.{Json, Logging, ZkUtils}
@@ -12,6 +14,7 @@ import org.I0Itec.zkclient.exception.ZkNoNodeException
 import org.apache.zookeeper.data.Stat
 
 import scala.collection._
+import scala.util.Random
 import scala.util.control.NonFatal
 
 /**
@@ -32,7 +35,9 @@ case class ConsumerDetail(name: String)
 
 case class OffsetWithStat(offset: Long, creation: Option[Time], modified: Option[Time])
 
-class OffsetGetter(zkClient: ZkClient, brokerStorage: Boolean) extends Logging {
+class OffsetGetter(zkClient: ZkClient, brokerStorage: Boolean, brokerList: Option[Seq[Broker]]) extends Logging {
+
+  require(!brokerStorage || (brokerList.isDefined && brokerList.get.nonEmpty))
 
   private val consumerMap: mutable.Map[Int, Option[SimpleConsumer]] = mutable.Map()
 
@@ -70,7 +75,7 @@ class OffsetGetter(zkClient: ZkClient, brokerStorage: Boolean) extends Logging {
             consumer =>
               val logSize = fetchLogSize(consumer, TopicAndPartition(topic, pid))
               val offsetAndStat = if (brokerStorage)
-                fetchOffsetKafka(consumer, group, topic, pid)
+                fetchOffsetKafka(group, topic, pid)
               else
                 fetchOffsetZk(consumer, group, topic, pid)
               OffsetInfo(
@@ -109,17 +114,43 @@ class OffsetGetter(zkClient: ZkClient, brokerStorage: Boolean) extends Logging {
     )
   }
 
-  private def fetchOffsetKafka(consumer: SimpleConsumer, group: String, topic: String, pid: Int): OffsetWithStat = {
+  private def fetchOffsetKafka(group: String, topic: String, pid: Int): OffsetWithStat = {
     val topicAndPartition = TopicAndPartition(topic, pid)
     val offsetFetchRequest = OffsetFetchRequest(group, Seq(topicAndPartition), 1.toShort, 0)
-    val channel = new BlockingChannel(consumer.host, consumer.port,
+
+    getCoordinator(group) match {
+      case Some(coordinator) =>
+        val channel = new BlockingChannel(coordinator.host, coordinator.port,
+          BlockingChannel.UseDefaultBufferSize, BlockingChannel.UseDefaultBufferSize, 5000)
+        channel.connect()
+        channel.send(offsetFetchRequest)
+        val offsetFetchResponse = OffsetFetchResponse.readFrom(channel.receive().buffer)
+        channel.disconnect()
+
+        val metadataAndError = offsetFetchResponse.requestInfo(topicAndPartition)
+        if (metadataAndError.error == ErrorMapping.NoError)
+          OffsetWithStat(metadataAndError.offset, None, None)
+        else
+          throw new BrokerNotAvailableException("Couldn't get info for partition %s-%s, error: %s".format(
+            topic, pid, ErrorMapping.exceptionFor(metadataAndError.error).getClass.getName))
+      case None =>
+        throw new BrokerNotAvailableException("Can't get coordinator for partition %s-%s ".format(topic, pid))
+    }
+  }
+
+  private def getCoordinator(group: String): Option[Broker] = {
+    val randomBroker = Random.shuffle(brokerList.get).head
+    val channel = new BlockingChannel(randomBroker.host, randomBroker.port,
       BlockingChannel.UseDefaultBufferSize, BlockingChannel.UseDefaultBufferSize, 5000)
     channel.connect()
-    channel.send(offsetFetchRequest)
-    val offsetFetchResponse = OffsetFetchResponse.readFrom(channel.receive().buffer)
-    val offset = offsetFetchResponse.requestInfo(topicAndPartition).offset
-
-    OffsetWithStat(offset, None, None)
+    channel.send(new ConsumerMetadataRequest(group, ConsumerMetadataRequest.CurrentVersion, 0.toShort))
+    val metadataResponse = ConsumerMetadataResponse.readFrom(channel.receive().buffer)
+    channel.disconnect()
+    if (metadataResponse.errorCode == ErrorMapping.NoError) {
+      metadataResponse.coordinatorOpt
+    } else {
+      None
+    }
   }
 
   private def processTopic(group: String, topic: String): Seq[OffsetInfo] = {

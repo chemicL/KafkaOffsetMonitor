@@ -2,13 +2,15 @@ package com.quantifind.kafka.offsetapp
 
 import java.text.NumberFormat
 
-import scala.concurrent.duration._
-
-import com.quantifind.sumac.{ ArgMain, FieldArgs }
+import com.quantifind.kafka.OffsetGetter
 import com.quantifind.sumac.validation.Required
+import com.quantifind.sumac.{ArgMain, FieldArgs}
+import kafka.client.ClientUtils
+import kafka.cluster.Broker
 import kafka.utils.ZKStringSerializer
 import org.I0Itec.zkclient.ZkClient
-import com.quantifind.kafka.OffsetGetter
+
+import scala.concurrent.duration._
 
 class OffsetGetterArgsWGT extends OffsetGetterArgs {
   @Required
@@ -28,11 +30,16 @@ class OffsetGetterArgs extends FieldArgs {
   @Required
   var zk: String = _
 
-  var brokerStorage = false
+  var brokerList: Option[String] = None
+  var brokerStorage: Boolean = false
 
   var zkSessionTimeout: Duration = 30 seconds
   var zkConnectionTimeout: Duration = 30 seconds
 
+  addValidation {
+    require(!brokerStorage || (brokerList.isDefined && brokerList.get.nonEmpty),
+      "brokerList is required when using brokerStorage")
+  }
 }
 
 /**
@@ -45,12 +52,15 @@ object OffsetGetterApp extends ArgMain[OffsetGetterArgsWGT] {
   def main(args: OffsetGetterArgsWGT) {
     var zkClient: ZkClient = null
     var og: OffsetGetter = null
+    var brokerList: Option[Seq[Broker]] = null
     try {
       zkClient = new ZkClient(args.zk,
         args.zkSessionTimeout.toMillis.toInt,
         args.zkConnectionTimeout.toMillis.toInt,
         ZKStringSerializer)
-      og = new OffsetGetter(zkClient, args.brokerStorage)
+      brokerList = args.brokerList.map(ClientUtils.parseBrokerList)
+
+      og = new OffsetGetter(zkClient, args.brokerStorage, brokerList)
       val i = og.getInfo(args.group, args.topics)
 
       if (i.offsets.nonEmpty) {
