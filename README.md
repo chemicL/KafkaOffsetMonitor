@@ -39,6 +39,7 @@ java -cp KafkaOffsetMonitor-assembly-0.2.1.jar \
      --zk zk-server1,zk-server2 \
      --port 8080 \
      --brokerStorage true \
+     --brokerList localhost:9092,localhost:9093 \
      --refresh 10.seconds \
      --retain 2.days
 ```
@@ -48,6 +49,7 @@ The arguments are:
 - **zk** the ZooKeeper hosts
 - **port** on what port will the app be available
 - **brokerStorage** whether to use the broker storage for offsets (since Kafka 0.8.2)
+- **brokerList** list of known brokers as host:port - only used if brokerStorage flag is set
 - **refresh** how often should the app refresh and store a point in the DB
 - **retain** how long should points be kept in the DB
 - **dbName** where to store the history (default 'offsetapp')
@@ -80,6 +82,7 @@ java -cp KafkaOffsetMonitor-assembly-0.3.0.jar:kafka-offset-monitor-another-db-r
      --zk zk-server1,zk-server2 \
      --port 8080 \
      --brokerStorage true \
+     --brokerList localhost:9092,localhost:9093 \
      --refresh 10.seconds \
      --retain 2.days \
      --pluginsArgs anotherDbHost=host1,anotherDbPort=555
